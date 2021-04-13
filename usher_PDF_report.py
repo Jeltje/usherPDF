@@ -1,285 +1,87 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-#from fpdf import FPDF, HTMLMixin
-from datetime import date
-import collections
-from myPDF import PDF
+from fpdf import FPDF, HTMLMixin
 
-
-class SampleInfo:
-    '''Mutations and closest strain info per sample; assign Variants of Concern or Interest
-       and Mutations of Concern'''
-    def __init__(self, inline, voConcern, voInterest, mutConcern):
-        '''Info extracted from a single line in usher_samples_hgwdev_angie_1a1b7_a247a0.tsv'''
-        fields = inline.strip().split('\t')
-        self.name = fields[0]
-        self.neighbor = fields[15]
-        self.hasIssue = 'None'
-        if self.neighbor in voConcern:
-            self.hasIssue = 'Variant of Concern'
-            return
-        if self.neighbor in voInterest:
-            self.hasIssue = 'Variant of Interest'
-            return
-        self.muts = fields[2]
-        if self.muts != '':
-            self.spikeMuts = self.splitMuts(mutConcern)
-            if len(self.spikeMuts) > 0:
-                self.hasIssue = 'Mutation of Concern' 
-        else:
-            self.spikeMuts = []
-    def splitMuts(self, mutConcern):
-        '''Extract the mutations per spike protein (S:) and find any matches with the
-           mutations Of Concern'''
-        spikeMuts = set()
-        byORF = self.muts.split(',')
-        for combi in byORF:
-            orf, mut = combi.split(':')
-            if orf == 'S':
-                spikeMuts.add(mut.lstrip('S:'))
-        return [m for m in list(spikeMuts) if m in mutConcern]
-
-class VariantInfo:
-   '''Per variant info (such as B.1.1.1.7 or N501Y)'''
-   def __init__(self, name, location, issue):
-       self.name = name
-       self.loc  = location
-       self.samples = []
-       self.issue = issue
-   def addSamples(self, listOfNames):
-       '''Samples that match this variant'''
-       self.samples = listOfNames
-   def printTableLine(self, colWidths, totalSampleCount, mutation=False):
-       '''Output a table in pdf format'''
-       if mutation == True:
-           pdf.buildTable([self.name, self.loc, str(len(self.samples))], colWidths)
-           return
-       hitCount = len(self.samples)
-       fract = 0
-       if hitCount > 0:
-           fract = round((float(hitCount)/totalSampleCount), 2)
-       pdf.buildTable([self.name, self.loc, str(hitCount), str(fract)], colWidths)
-       
-class VariantSet:
-    '''Match a dictionary of variants to samples'''
-    def __init__(self, samples, variantDict, isMutation=False):
-        '''Inputs are sample table and a variant dictionary with name as key and location of origin as value'''
-        self.isMutation = isMutation
-        # mutations of concern table
-        if isMutation == True:
-            matchedSamples = [s for s in samples if s.hasIssue == 'Mutation of Concern']
-        # variant of Concern/Interest
-        else:
-            matchedSamples = [s for s in samples if s.neighbor in variantDict.keys()]
-        self.varList = []
-        self.sCount   = len(matchedSamples)
-        if self.sCount == 0:
-            return
-        self.totalSamples = len(samples)
-        # extract the type of issue from one of the samples (Variant of Concern etc)
-        self.issue = matchedSamples[0].hasIssue
-        # Create a variant object and add the matching samples
-        for variant, location  in variantDict.items():
-            v = VariantInfo(variant, location, self.issue)
-            if isMutation == True:
-                v.addSamples([m for m in matchedSamples if variant in m.spikeMuts])
-            else:
-                v.addSamples([m for m in matchedSamples if m.neighbor == variant])
-            self.varList.append(v)
-        
-    def tableIfHits(self):
-        '''Print a table to the pdf if we have any hits for this variant set (Concern or Interest)'''
-        if self.sCount == 0:
-            return(pdf.get_x())
-        if self.isMutation == True:
-            header = ["Mutation", "Found in                         ", "Samples"]
-        else:
-            header = ["Variant", "First detected      ", "Samples", "Frequency"]
-        colWidths = pdf.buildTable(header, isHead=True)
-        for v in self.varList:
-            v.printTableLine(colWidths, self.totalSamples, self.isMutation)
-        return(sum(colWidths) + 15)
-
-
-class SampleSet:
-    '''Holds and manipulates SampleInfo objects'''
-    def __init__(self):
-        self.entries = []
-    def add(self, inline, vocs, vois, mocs):
-        v = SampleInfo(inline, vocs, vois, mocs)
-        self.entries.append(v)
-    def perSampleTable(self):
-        '''On a new page(?), put all the samples, nearest neihbor, and their issue (if any)'''
-        # need to know the longest names to size the header
-        header = ["Sample name", "Closest known variant", "Class"]
-        pdf.set_font('Times', '', 10)
-        sSize = 5 + pdf.get_string_width(max([v.name for v in self.entries], key = len))
-        nSize = 5 + pdf.get_string_width(max([v.neighbor for v in self.entries]+header, key = len))
-        cSize = 5 + pdf.get_string_width(max([v.hasIssue for v in self.entries], key = len))
-        colWidths = [sSize, nSize, cSize]
-        pdf.buildTable(header, colWidths=colWidths, isHead=True)
-        for v in self.entries:
-            pdf.buildTable([v.name, v.neighbor, v.hasIssue], colWidths)
-
-
-####################################
-### Main                         ###
-####################################
-
-ushStrain = 'usher_samples_hgwdev_angie_1a1b7_a247a0.tsv'
-outf='/mnt/c/Users/yinna/Downloads/play/my2.pdf'
-
-# Variants of concern and their locations of origin
-vocs = {'B.1.1.7': 'United Kingdom', 
-	'P1': 'Japan/Brazil', 
-	'B.1.351': 'South Africa', 
-	'B.1.427': 'California', 
-	'B.1.429': 'California'}
-# variants of interest
-vois = {'B.1.526': 'New York', 
-	'B.1.525': 'New York', 
-	'P.2': 'Brazil'}
-
-# Mutations of interest and the variants they occur in
-mocs = collections.OrderedDict([
-        ('D614G', 'all Variants of Concern'),
-        ('N501Y', 'B.1.1.7; P1; B.1.351'),
-        ('A570D', 'B.1.1.7'),
-        ('P681H', 'B.1.1.7'),
-        ('K417N', 'B.1.351'), 
-        ('E484K', 'B.1.351'), 
-        ('S13I',  'B.1.429'),
-        ('W152C', 'B.1.429'),
-        ('L452R', 'B.1.427; B.1.429')
-       ])
-
-vList = SampleSet()
-# add variant info to samples
-with open(ushStrain, 'r') as f:
-    head = f.readline()
-    for line in  f:
-        vList.add(line, vocs, vois, mocs)
-# add sample info to variants
-varConcern  = VariantSet(vList.entries, vocs)
-varInterest = VariantSet(vList.entries, vois)
-varMutConcern = VariantSet(vList.entries, mocs, isMutation=True)
-
-
-# start printing the PDF
-pdf = PDF()
-# total number of pages, put in {nb}
-pdf.alias_nb_pages()
-# auto adds as many pages as needed
-pdf.add_page()
-pdf.set_font('Times', '', 12)
-
-####################################
-### General info section         ###
-####################################
-
-pdf.chapter("Introduction")
-intro = ['This is a summary of the UShER analysis of', str(len(vList.entries)), 'samples analyzed on', str(date.today()), 
-     '. The full analysis can be found']
-pdf.txtWithUrl('This is a summary of the', 'UShER', 'https://genome.ucsc.edu/cgi-bin/hgPhyloPlace', 'analysis of', newline=False)
-beforeTxt = " {} samples analyzed on {}. The full analysis can be found".format(len(vList.entries), date.today())
-pdf.txtWithUrl(beforeTxt, "at UCSC", "https://genome.ucsc.edu/cgi-bin/hgPhyloPlace", "(this is a placeholder link)")
-
-####################################
-### Variants of Concern section  ###
-####################################
-
-title = 'Variants of Concern: None found'
-if varConcern.sCount > 0:
-    title = 'Variants of Concern: {} samples'.format(varConcern.sCount)
-pdf.chapter(title)
-
-# if any variant is in our set, print table and keep track of where it ends...
-y_offset = pdf.get_y()
-x_offset = varConcern.tableIfHits()
-endOfTable = pdf.get_y()
-
-intro = 'These variants have changes in the spike protein for which there is evidence of one or more of the following: '
-bullet_text = ['an increase in transmissibility',
-            'more severe disease (increased hospitalizations or deaths)', 
-            'significant reduction in neutralization by antibodies generated during previous infection or vaccination',
-            'reduced effectiveness of treatments or vaccines', 
-            'diagnostic detection failures']
-
-# ... so we can print the text next to it
-pdf.printPar(intro, bullet_text, x_offset, y_offset)
-endOfText = pdf.get_y()
-# make sure we start below the table OR the text, whichever is lower on the page
-# TODO: check what happens on a page break
-pdf.set_y(max(endOfTable, endOfText))
-
-# add a URL for more information
-pdf.cdc_link('Concern')
-
-####################################
-### Variants of Interest section ###
-####################################
-
-title = 'Variants of Interest: None found'
-if varInterest.sCount > 0:
-    title = 'Variants of Interest: {} samples'.format(varInterest.sCount)
-pdf.chapter(title)
-
-# if any variant is in our set, print table and keep track of where it ends...
-y_offset = pdf.get_y()
-x_offset = varInterest.tableIfHits()
-endOfTable = pdf.get_y()
-
-intro = 'These variants have specific genetic markers that have been associated with one or more of the following:'
-bullet_text = ['changes to receptor binding',
-               'reduced neutralization by antibodies generated against previous infection or vaccination',
-               'reduced efficacy of treatments', 
-               'potential diagnostic impact',
-               'predicted increase in transmissibility or disease severity' ]
-pdf.printPar(intro, bullet_text, x_offset, y_offset)
-endOfText = pdf.get_y()
-pdf.set_y(max(endOfTable, endOfText))
-
-# add a URL for more information
-pdf.cdc_link('Interest')
-
-
-####################################
-### Mutations of Concern section ###
-####################################
-# If samples are not in either group they may still have 'mutations of concern', namely the individual
-# mutations listed in the Variants of Concern table (so only spike proteins for now)
-
-title = 'Mutations of Concern: None found'
-if varMutConcern.sCount > 0:
-    title = 'Mutations of Concern: {} samples'.format(varMutConcern.sCount)
-pdf.chapter(title)
-
-# if any variant is in our set, print table and keep track of where it ends...
-y_offset = pdf.get_y()
-x_offset = varMutConcern.tableIfHits()
-endOfTable = pdf.get_y()
-
-
-intro = 'If samples are not in either group they may still have mutations of concern: the individual spike protein mutations listed in the Variants of Concern table at CDC. Samples may have more than one such mutation; the total number of samples with any mutation is {}.'.format(varMutConcern.sCount)
-
-pdf.printPar(intro, [], x_offset, y_offset)
-endOfText = pdf.get_y()
-pdf.set_y(max(endOfTable, endOfText))
-
-
-####################################
-### Per sample info              ###
-####################################
-
-# Sample	Neighbor	Info
-pdf.add_page()
-vList.perSampleTable()
-
-# and finally, print to file
-pdf.output(outf, 'F')
-
-
-
-
+class PDF(FPDF, HTMLMixin):
+    '''PDF formatting for UShER report'''
+    def header(self):
+        # Logo
+        self.image('GI.png', x=0, y=5, w=66)
+        # Line break
+        self.ln(15)
+    def buildTable(self, text, colWidths=False, isHead=False):
+        '''Create one line in a table using two lists defining text and column width, 
+           isHead makes bold and calculates colWidths, which are then returned'''
+        self.set_font('Times','',10.0)
+        # 40, 72, 124 is (almost) CGI logo color. 
+        self.set_draw_color(40, 72, 124)  
+        if isHead == True:
+            # Add 120 to all GI color values to lighten it and use as background in table header
+            self.set_fill_color(160, 192, 244)  
+            self.set_font('Times','B',10.0)
+            if colWidths == False:
+                colWidths = [self.get_string_width(tx) + 2 for tx in text]
+        th = self.font_size
+        for tx, cw in map(None, text, colWidths):
+            self.cell(cw, 2 * th, tx, border=1, fill=True)
+        self.set_font('Times','',10.0)
+        self.ln(2 * th)
+        # reset the background color
+        self.set_fill_color(255, 255, 255)  # white
+        if isHead == True:
+            return colWidths
+    def chapter(self, title, addLine=True):
+        if addLine == True:
+	# create some distance
+            self.ln(h = '10')
+    	# draw a line
+            self.line(self.l_margin, self.y, self.w - self.r_margin, self.y)
+            self.ln(h = '10')
+        self.set_text_color(40, 72, 124)
+        self.set_font('Arial', 'B', 15)
+        self.cell(w=150, h=10, txt=title, border=0, ln=1)
+        self.set_text_color(0, 0, 0)
+    def printPar(self, intro, bullet_text, xloc, yloc):
+        '''Formats an introduction line and a list of bullet points at an offset'''
+        self.set_text_color(0, 0, 0)
+        self.set_font('Times', '', 10)
+        self.set_xy(xloc, yloc)
+        self.multi_cell(w=0, h=5, txt=intro, border=0, align='L')
+        for bt in bullet_text:
+            self.set_x(xloc)
+            self.multi_cell(w=0, h=5, txt='- '+ bt, border=0, align='L')
+    def txtWithUrl(self, txtBefore, urltxt, url, txtAfter, newline=True):
+        '''Adds one line containing a URL'''
+        self.set_font('Times', '', 10)
+        self.write(5, txtBefore + ' ')
+        # Then put a blue underlined link
+        self.set_text_color(0, 0, 255)
+        self.set_font('Times', 'U', 10)
+        self.write(5, urltxt, url)
+        self.set_text_color(0, 0, 0)
+        self.set_font('Times', '', 10)
+        self.write(5, ' ' + txtAfter)
+        if newline == True:
+            self.ln(h = '10')
+    def cdc_link(self, section):
+        '''Link to section (Interest or Concern) on the CDC website'''
+        self.set_font('Times', '', 10)
+        cdcLink = "https://www.cdc.gov/coronavirus/2019-ncov/cases-updates/variant-surveillance/variant-info.html#" + section
+        self.write(5, 'Visit ')
+        # Then put a blue underlined link
+        self.set_text_color(0, 0, 255)
+        self.set_font('Times', 'U', 10)
+        self.write(5, 'the CDC website', cdcLink)
+        self.set_text_color(0, 0, 0)
+        self.set_font('Times', '', 10)
+        self.write(5, ' for more information')
+        self.ln(h = '10')
+    def footer(self):
+        # Position at 1.5 cm from bottom
+        self.set_y(-15)
+        # Arial italic 8
+        self.set_font('Arial', 'I', 8)
+        # Page number (1/total)
+        self.cell(0, 10, 'Page ' + str(self.page_no()) + '/{nb}', 0, 0, 'C')
 
