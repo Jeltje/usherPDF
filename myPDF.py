@@ -22,9 +22,6 @@ class PDF(FPDF, HTMLMixin):
             self.set_font('Times','B',10.0)
             if colWidths == False:
                 colWidths = [self.get_string_width(tx) + 2 for tx in text]
-            #colWidths = []
-            #for tx in text:
-            #    colWidths.append(self.get_string_width(tx)+2)
         th = self.font_size
         for tx, cw in map(None, text, colWidths):
             self.cell(cw, 2 * th, tx, border=1, fill=True)
@@ -65,7 +62,11 @@ class PDF(FPDF, HTMLMixin):
         # and go back to where we started
         self.set_xy(x=xcur, y=ycur)
     def chapter(self, title):
-        #self.set_text_color(100, 132, 184)  
+	# create some distance
+        self.ln(h = '10')
+	# draw a line
+        self.line(self.l_margin, self.y, self.w - self.r_margin, self.y)
+        self.ln(h = '10')
         self.set_text_color(40, 72, 124)
         self.set_font('Arial', 'B', 15)
         self.cell(w=150, h=10, txt=title, border=0, ln=1)

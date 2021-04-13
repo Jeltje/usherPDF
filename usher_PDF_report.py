@@ -6,84 +6,109 @@ from datetime import date
 import collections
 from myPDF import PDF
 
+
 class SampleInfo:
-    '''Mutations and closest strain info per sample'''
-    def __init__(self, inline):
+    '''Mutations and closest strain info per sample; assign Variants of Concern or Interest
+       and Mutations of Concern'''
+    def __init__(self, inline, voConcern, voInterest, mutConcern):
         '''Info extracted from a single line in usher_samples_hgwdev_angie_1a1b7_a247a0.tsv'''
         fields = inline.strip().split('\t')
         self.name = fields[0]
         self.neighbor = fields[15]
         self.hasIssue = 'None'
+        if self.neighbor in voConcern:
+            self.hasIssue = 'Variant of Concern'
+            return
+        if self.neighbor in voInterest:
+            self.hasIssue = 'Variant of Interest'
+            return
         self.muts = fields[2]
         if self.muts != '':
-            self.splitMuts()
+            self.spikeMuts = self.splitMuts(mutConcern)
+            if len(self.spikeMuts) > 0:
+                self.hasIssue = 'Mutation of Concern' 
         else:
             self.spikeMuts = []
-    def splitMuts(self):
-        '''Extract the mutations per spike protein (S:)'''
+    def splitMuts(self, mutConcern):
+        '''Extract the mutations per spike protein (S:) and find any matches with the
+           mutations Of Concern'''
         spikeMuts = set()
         byORF = self.muts.split(',')
         for combi in byORF:
             orf, mut = combi.split(':')
             if orf == 'S':
                 spikeMuts.add(mut.lstrip('S:'))
-        self.spikeMuts = list(spikeMuts)
-    
+        return [m for m in list(spikeMuts) if m in mutConcern]
 
-class Vset:
+class VariantInfo:
+   '''Per variant info (such as B.1.1.1.7 or N501Y)'''
+   def __init__(self, name, location, issue):
+       self.name = name
+       self.loc  = location
+       self.samples = []
+       self.issue = issue
+   def addSamples(self, listOfNames):
+       '''Samples that match this variant'''
+       self.samples = listOfNames
+   def printTableLine(self, colWidths, totalSampleCount, mutation=False):
+       '''Output a table in pdf format'''
+       if mutation == True:
+           pdf.buildTable([self.name, self.loc, str(len(self.samples))], colWidths)
+           return
+       hitCount = len(self.samples)
+       fract = 0
+       if hitCount > 0:
+           fract = round((float(hitCount)/totalSampleCount), 2)
+       pdf.buildTable([self.name, self.loc, str(hitCount), str(fract)], colWidths)
+       
+class VariantSet:
+    '''Match a dictionary of variants to samples'''
+    def __init__(self, samples, variantDict, isMutation=False):
+        '''Inputs are sample table and a variant dictionary with name as key and location of origin as value'''
+        self.isMutation = isMutation
+        # mutations of concern table
+        if isMutation == True:
+            matchedSamples = [s for s in samples if s.hasIssue == 'Mutation of Concern']
+        # variant of Concern/Interest
+        else:
+            matchedSamples = [s for s in samples if s.neighbor in variantDict.keys()]
+        self.varList = []
+        self.sCount   = len(matchedSamples)
+        if self.sCount == 0:
+            return
+        self.totalSamples = len(samples)
+        # extract the type of issue from one of the samples (Variant of Concern etc)
+        self.issue = matchedSamples[0].hasIssue
+        # Create a variant object and add the matching samples
+        for variant, location  in variantDict.items():
+            v = VariantInfo(variant, location, self.issue)
+            if isMutation == True:
+                v.addSamples([m for m in matchedSamples if variant in m.spikeMuts])
+            else:
+                v.addSamples([m for m in matchedSamples if m.neighbor == variant])
+            self.varList.append(v)
+        
+    def tableIfHits(self):
+        '''Print a table to the pdf if we have any hits for this variant set (Concern or Interest)'''
+        if self.sCount == 0:
+            return(pdf.get_x())
+        if self.isMutation == True:
+            header = ["Mutation", "Found in                         ", "Samples"]
+        else:
+            header = ["Variant", "First detected      ", "Samples", "Frequency"]
+        colWidths = pdf.buildTable(header, isHead=True)
+        for v in self.varList:
+            v.printTableLine(colWidths, self.totalSamples, self.isMutation)
+        return(sum(colWidths) + 15)
+
+
+class SampleSet:
     '''Holds and manipulates SampleInfo objects'''
     def __init__(self):
         self.entries = []
-    def add(self, inline):
-        v = SampleInfo(inline)
+    def add(self, inline, vocs, vois, mocs):
+        v = SampleInfo(inline, vocs, vois, mocs)
         self.entries.append(v)
-    def variantTableIfHits(self, strains, strainIssue, printAll=False):
-        '''Check if the sample neighbors match any of a list of variants
-           and if so, add that info to the sample and create a table.
-           Return positioning info for text'''
-        sampleCount = len(self.entries)
-        # first we must know if we have any hits at all
-        matchingSampleCount = len([v for v in self.entries if v.neighbor in strains.keys()])
-        if matchingSampleCount == 0:
-            return(pdf.get_x(), 0)
-        # strains is a dict with variant as key, location of origin as value
-        header = ["Variant", "First detected      ", "Samples", "Frequency"]
-        colWidths = pdf.buildTable(header, isHead=True)
-        for variant, location  in strains.items():
-            matchingSamples = [v for v in self.entries if v.neighbor == variant]
-            # add issue to the sample object
-            for v in matchingSamples:
-                v.hasIssue = strainIssue
-            hitCount = len(matchingSamples)
-            # print only variants that have sample hits...
-            if(hitCount > 0):
-                fract = round((float(hitCount)/sampleCount), 2)
-                pdf.buildTable([variant, location, str(hitCount), str(fract)], colWidths)
-            # ... unless otherwise instructed
-            elif(printAll == True):
-                pdf.buildTable([variant, location, '0', '0'], colWidths)
-        return(sum(colWidths) + 15, matchingSampleCount)
-    def mutationTable(self, mutations, printAll=False):
-        '''Match mutations of concern to samples that are not already classified; output table'''
-        remainingSamples = [v for v in self.entries if v.hasIssue == 'None']
-        if len(remainingSamples) == 0:
-            return(pdf.get_x(), 0)
-        # if none of the remaining samples has any matching mutations, don't print table
-        for mutation, variant in mutations.items():
-            matchingSamples = [v for v in remainingSamples if mutation in v.spikeMuts]
-            for v in matchingSamples:
-                v.hasIssue = 'Mutation of Concern'
-        matchingUniqSampleCount = len([v for v in self.entries if v.hasIssue == 'Mutation of Concern'])
-        if matchingUniqSampleCount == 0:
-            return(pdf.get_x(), 0)
-        # we have at least some, so print a table
-        header = ["Mutation", "Found in                         ", "Samples"]
-        colWidths = pdf.buildTable(header, isHead=True)
-        for mutation, variant in mutations.items():
-            matchingSamples = len([v for v in remainingSamples if mutation in v.spikeMuts])
-            if (matchingSamples > 0) or printAll == True:
-                pdf.buildTable([mutation, variant, str(matchingSamples)], colWidths)
-        return(sum(colWidths) + 15, matchingUniqSampleCount)
     def perSampleTable(self):
         '''On a new page(?), put all the samples, nearest neihbor, and their issue (if any)'''
         # need to know the longest names to size the header
@@ -103,13 +128,43 @@ class Vset:
 ####################################
 
 ushStrain = 'usher_samples_hgwdev_angie_1a1b7_a247a0.tsv'
-outf='/mnt/c/Users/yinna/Downloads/play/my.pdf'
+outf='/mnt/c/Users/yinna/Downloads/play/my2.pdf'
 
-vList = Vset()
+# Variants of concern and their locations of origin
+vocs = {'B.1.1.7': 'United Kingdom', 
+	'P1': 'Japan/Brazil', 
+	'B.1.351': 'South Africa', 
+	'B.1.427': 'California', 
+	'B.1.429': 'California'}
+# variants of interest
+vois = {'B.1.526': 'New York', 
+	'B.1.525': 'New York', 
+	'P.2': 'Brazil'}
+
+# Mutations of interest and the variants they occur in
+mocs = collections.OrderedDict([
+        ('D614G', 'all Variants of Concern'),
+        ('N501Y', 'B.1.1.7; P1; B.1.351'),
+        ('A570D', 'B.1.1.7'),
+        ('P681H', 'B.1.1.7'),
+        ('K417N', 'B.1.351'), 
+        ('E484K', 'B.1.351'), 
+        ('S13I',  'B.1.429'),
+        ('W152C', 'B.1.429'),
+        ('L452R', 'B.1.427; B.1.429')
+       ])
+
+vList = SampleSet()
+# add variant info to samples
 with open(ushStrain, 'r') as f:
     head = f.readline()
     for line in  f:
-        vList.add(line)
+        vList.add(line, vocs, vois, mocs)
+# add sample info to variants
+varConcern  = VariantSet(vList.entries, vocs)
+varInterest = VariantSet(vList.entries, vois)
+varMutConcern = VariantSet(vList.entries, mocs, isMutation=True)
+
 
 # start printing the PDF
 pdf = PDF()
@@ -134,19 +189,14 @@ pdf.txtWithUrl(beforeTxt, "at UCSC", "https://genome.ucsc.edu/cgi-bin/hgPhyloPla
 ### Variants of Concern section  ###
 ####################################
 
-# We want the number of samples in the title so create a placeholder for now
-xloc, yloc = pdf.chapterSpace()
-
-# Variants of concern and their locations of origin
-vocs = {'B.1.1.7': 'United Kingdom', 
-	'P1': 'Japan/Brazil', 
-	'B.1.351': 'South Africa', 
-	'B.1.427': 'California', 
-	'B.1.429': 'California'}
+title = 'Variants of Concern: None found'
+if varConcern.sCount > 0:
+    title = 'Variants of Concern: {} samples'.format(varConcern.sCount)
+pdf.chapter(title)
 
 # if any variant is in our set, print table and keep track of where it ends...
 y_offset = pdf.get_y()
-x_offset, hitCount = vList.variantTableIfHits(vocs, 'Variant of Concern', printAll=True)
+x_offset = varConcern.tableIfHits()
 endOfTable = pdf.get_y()
 
 intro = 'These variants have changes in the spike protein for which there is evidence of one or more of the following: '
@@ -163,12 +213,6 @@ endOfText = pdf.get_y()
 # TODO: check what happens on a page break
 pdf.set_y(max(endOfTable, endOfText))
 
-# fill the chapter space we created earlier
-title = 'Variants of Concern: None found'
-if hitCount > 0:
-    title = 'Variants of Concern: {} samples'.format(hitCount)
-pdf.chapterFill(title, xloc, yloc)
-
 # add a URL for more information
 pdf.cdc_link('Concern')
 
@@ -176,15 +220,14 @@ pdf.cdc_link('Concern')
 ### Variants of Interest section ###
 ####################################
 
-xloc, yloc = pdf.chapterSpace()
+title = 'Variants of Interest: None found'
+if varInterest.sCount > 0:
+    title = 'Variants of Interest: {} samples'.format(varInterest.sCount)
+pdf.chapter(title)
 
-# variants of interest
-vocs = {'B.1.526': 'New York', 
-	'B.1.525': 'New York', 
-	'P.2': 'Brazil'}
-
+# if any variant is in our set, print table and keep track of where it ends...
 y_offset = pdf.get_y()
-x_offset, hitCount = vList.variantTableIfHits(vocs, 'Variant of Interest', printAll=True)
+x_offset = varInterest.tableIfHits()
 endOfTable = pdf.get_y()
 
 intro = 'These variants have specific genetic markers that have been associated with one or more of the following:'
@@ -197,12 +240,6 @@ pdf.printPar(intro, bullet_text, x_offset, y_offset)
 endOfText = pdf.get_y()
 pdf.set_y(max(endOfTable, endOfText))
 
-# fill the chapter space we created earlier
-title = 'Variants of Interest: None found'
-if hitCount > 0:
-    title = 'Variants of Interest: {} samples'.format(hitCount)
-pdf.chapterFill(title, xloc, yloc)
-
 # add a URL for more information
 pdf.cdc_link('Interest')
 
@@ -213,35 +250,23 @@ pdf.cdc_link('Interest')
 # If samples are not in either group they may still have 'mutations of concern', namely the individual
 # mutations listed in the Variants of Concern table (so only spike proteins for now)
 
-xloc, yloc = pdf.chapterSpace()
+title = 'Mutations of Concern: None found'
+if varMutConcern.sCount > 0:
+    title = 'Mutations of Concern: {} samples'.format(varMutConcern.sCount)
+pdf.chapter(title)
 
-# Mutations of interest and the variants they occur in
-mocs = collections.OrderedDict([
-        ('D614G', 'all Variants of Concern'),
-        ('N501Y', 'B.1.1.7; P1; B.1.351'),
-        ('A570D', 'B.1.1.7'),
-        ('P681H', 'B.1.1.7'),
-        ('K417N', 'B.1.351'), 
-        ('E484K', 'B.1.351'), 
-        ('S13I',  'B.1.429'),
-        ('W152C', 'B.1.429'),
-        ('L452R', 'B.1.427; B.1.429')
-       ])
+# if any variant is in our set, print table and keep track of where it ends...
 y_offset = pdf.get_y()
-x_offset, hitCount = vList.mutationTable(mocs)
+x_offset = varMutConcern.tableIfHits()
 endOfTable = pdf.get_y()
 
-intro = 'If samples are not in either group they may still have mutations of concern: the individual spike protein mutations listed in the Variants of Concern table at CDC. Samples may have more than one such mutation; the total number of samples with any mutation is {}.'.format(hitCount)
+
+intro = 'If samples are not in either group they may still have mutations of concern: the individual spike protein mutations listed in the Variants of Concern table at CDC. Samples may have more than one such mutation; the total number of samples with any mutation is {}.'.format(varMutConcern.sCount)
 
 pdf.printPar(intro, [], x_offset, y_offset)
 endOfText = pdf.get_y()
 pdf.set_y(max(endOfTable, endOfText))
 
-# fill the chapter space we created earlier
-title = 'Mutations of Concern: None found'
-if hitCount > 0:
-    title = 'Mutations of Concern: {} unique samples'.format(hitCount)
-pdf.chapterFill(title, xloc, yloc)
 
 ####################################
 ### Per sample info              ###
