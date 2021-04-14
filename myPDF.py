@@ -31,42 +31,13 @@ class PDF(FPDF, HTMLMixin):
         self.set_fill_color(255, 255, 255)  # white
         if isHead == True:
             return colWidths
-    def chapterSpace(self):
-        '''Creates some spacing and returns placeholder coordinates 
-        to fill in once we know the number of samples'''
-        self.set_draw_color(40, 72, 124)  
+    def chapter(self, title, addLine=True):
+        if addLine == True:
 	# create some distance
-        self.ln(h = '10')
-	# draw a line
-        self.line(self.l_margin, self.y, self.w - self.r_margin, self.y)
-        self.ln(h = '10')
-        # Create title space but print no text. This creates spacing for later
-        xloc = self.get_x()
-        yloc = self.get_y()
-        self.set_font('Arial', 'B', 15)
-        self.cell(w=50, h=10, txt='', border=0, ln=1)
-        return xloc, yloc
-    def chapterFill(self, title, xloc, yloc):
-        '''Fill the chapter space with text'''
-        # where are we now
-        xcur = self.get_x()
-        ycur = self.get_y()
-        # go to correct location
-        self.set_xy(x=xloc, y=yloc)
-        # print title
-        self.set_text_color(40, 72, 124)
-        #self.set_text_color(100, 132, 184)  
-        self.set_font('Arial', 'B', 15)
-        self.cell(w=150, h=10, txt=title, border=0, ln=1)
-        self.set_text_color(0, 0, 0)
-        # and go back to where we started
-        self.set_xy(x=xcur, y=ycur)
-    def chapter(self, title):
-	# create some distance
-        self.ln(h = '10')
-	# draw a line
-        self.line(self.l_margin, self.y, self.w - self.r_margin, self.y)
-        self.ln(h = '10')
+            self.ln(h = '10')
+    	# draw a line
+            self.line(self.l_margin, self.y, self.w - self.r_margin, self.y)
+            self.ln(h = '10')
         self.set_text_color(40, 72, 124)
         self.set_font('Arial', 'B', 15)
         self.cell(w=150, h=10, txt=title, border=0, ln=1)
