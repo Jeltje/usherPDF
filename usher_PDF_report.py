@@ -3,13 +3,10 @@
 
 # must use 2.7 because pyfpdf is old
 
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 from datetime import date
 import collections
 from myPDF import PDF
-from myFigs import *
+from usherFigs import *
 import sys
 import tempfile
 
@@ -120,8 +117,8 @@ class SampleSet:
         # need to know the longest names to size the header
         header = ["Sample name", "Closest known variant", "Class"]
         pdf.set_font('Times', '', 10)
-        sSize = 5 + pdf.get_string_width(max([v.name for v in self.entries], key = len))
-        nSize = 5 + pdf.get_string_width(max([v.neighbor for v in self.entries]+header, key = len))
+        sSize = 5 + pdf.get_string_width(max([v.name for v in self.entries]+list([header[0]]), key = len))
+        nSize = 5 + pdf.get_string_width(max([v.neighbor for v in self.entries]+list([header[1]]), key = len))
         cSize = 5 + pdf.get_string_width(max([v.hasIssue for v in self.entries], key = len))
         colWidths = [sSize, nSize, cSize]
         pdf.buildTable(header, colWidths=colWidths, isHead=True)
@@ -206,7 +203,7 @@ pdf.multi_cell(w=70, h=5, txt=text)
 
 # print a pie chart only if we have at least 5 samples
 if len(vList.entries) > 4:
-    pdf.image(outpng, x=pdf.r_margin+70, y=keep_y, w=90)
+    pdf.image(outpng, x=90, y=keep_y, w=90)
     # weirdly, printing an image doesn't properly keep track of y
     pdf.ln(h=15)
 # some URLs
@@ -221,7 +218,8 @@ pdf.txtWithUrl('UShER can be accessed online at', ushURL, 'https://' + ushURL, '
 
 title = 'Variants of Concern: None found'
 if varConcern.sCount > 0:
-    title = 'Variants of Concern: {} samples'.format(varConcern.sCount)
+    samples = 'samples' if varConcern.sCount>1 else 'sample'
+    title = 'Variants of Concern: {} {}'.format(varConcern.sCount, samples)
 pdf.chapter(title)
 
 # if any variant is in our set, print table and keep track of where it ends...
@@ -252,7 +250,8 @@ pdf.cdc_link('Concern')
 
 title = 'Variants of Interest: None found'
 if varInterest.sCount > 0:
-    title = 'Variants of Interest: {} samples'.format(varInterest.sCount)
+    samples = 'samples' if varInterest.sCount>1 else 'sample'
+    title = 'Variants of Interest: {} {}'.format(varInterest.sCount, samples)
 pdf.chapter(title)
 
 # if any variant is in our set, print table and keep track of where it ends...
@@ -282,9 +281,12 @@ pdf.cdc_link('Interest')
 
 title = 'Mutations of Concern: None found'
 if varMutConcern.sCount > 0:
+    samples = 'samples' if varMutConcern.sCount>1 else 'sample'
+    title = 'Mutations of Concern: {} samples'.format(varMutConcern.sCount, samples)
     pdf.add_page()
-    title = 'Mutations of Concern: {} samples'.format(varMutConcern.sCount)
-pdf.chapter(title, addLine=False)
+    pdf.chapter(title, addLine=False)
+else:
+    pdf.chapter(title)
 
 # if any variant is in our set, print table and keep track of where it ends...
 y_offset = pdf.get_y()
@@ -302,6 +304,8 @@ pdf.set_y(max(endOfTable, endOfText))
 ### Per sample info              ###
 ####################################
 
+# TODO: trim sample IDs if they get too long
+# TODO: https://www.cdc.gov/coronavirus/2019-ncov/lab/resources/reporting-sequencing-guidance.html
 # Do not print if more than 100 samples
 if len(vList.entries) > 100:
     text = 'See <insert text here> for more information on each sample.'

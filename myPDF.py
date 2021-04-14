@@ -2,12 +2,16 @@
 # coding: utf-8
 
 from fpdf import FPDF, HTMLMixin
+from os import path
+import sys
 
 class PDF(FPDF, HTMLMixin):
     '''PDF formatting for UShER report'''
     def header(self):
-        # Logo
-        self.image('GI.png', x=0, y=5, w=66)
+        # Logo should be in same directory as code
+        pngDir = path.dirname(sys.argv[0])
+        GIlogo = path.join(pngDir, 'GI.png')
+        self.image(GIlogo, x=0, y=5, w=66)
         # Line break
         self.ln(15)
     def buildTable(self, text, colWidths=False, isHead=False):
